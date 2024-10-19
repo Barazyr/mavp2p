@@ -11,6 +11,8 @@ import (
 	"github.com/bluenviron/gomavlib/v3"
 	"github.com/bluenviron/gomavlib/v3/pkg/dialects/common"
 	"github.com/bluenviron/gomavlib/v3/pkg/message"
+	"github.com/bluenviron/gomavlib/v3/pkg/frame"
+
 )
 
 const (
@@ -18,6 +20,10 @@ const (
 )
 
 var zero reflect.Value
+
+//VK
+var comTimeLast time.Time
+//VK
 
 func getTarget(msg message.Message) (byte, byte, bool) {
 	rv := reflect.ValueOf(msg).Elem()
@@ -49,6 +55,8 @@ type messageHandler struct {
 
 	remoteNodeMutex sync.Mutex
 	remoteNodes     map[remoteNodeKey]time.Time
+	disableGCS      bool
+	activeGCS       byte
 }
 
 func newMessageHandler(
@@ -63,6 +71,8 @@ func newMessageHandler(
 		streamreqDisable: streamreqDisable,
 		node:             node,
 		remoteNodes:      make(map[remoteNodeKey]time.Time),
+		disableGCS:       false,
+		activeGCS:        0,
 	}
 
 	wg.Add(1)
@@ -91,7 +101,19 @@ func (mh *messageHandler) run() {
 					}
 				}
 			}()
+//VK
+		case <-time.After(1 * time.Second):
+			func() {
+				now := time.Now()
 
+					if ( mh.disableGCS ==true ) &&(now.Sub(comTimeLast) >= 2*time.Second ) {
+						log.Printf("TIMEOUT, return from tracking mode to normal, %s", comTimeLast)
+						mh.disableGCS = false
+					}
+			}()
+
+
+//VK
 		case <-mh.ctx.Done():
 			return
 		}
@@ -141,6 +163,61 @@ func (mh *messageHandler) onEventFrame(evt *gomavlib.EventFrame) {
 		}
 	}
 
+	currentFrame := evt.Frame
+	//currentMessage := nil
+
+	switch msg := evt.Message().(type) {
+	// if frm.Message() is a *ardupilotmega.MessageHeartbeat, access its fields
+	//case *ardupilotmega.MessageHeartbeat:
+	//    log.Printf("received heartbeat (type %d)\n", msg.Type)
+
+	    // if frm.Message() is a *ardupilotmega.MessageServoOutputRaw, access its fields
+	//case *ardupilotmega.MessageServoOutputRaw:
+	//    log.Printf("received servo output with values: %d %d %d %d %d %d %d %d\n",
+	//    msg.Servo1Raw, msg.Servo2Raw, msg.Servo3Raw, msg.Servo4Raw,
+	//    msg.Servo5Raw, msg.Servo6Raw, msg.Servo7Raw, msg.Servo8Raw)
+	case *common.MessageCommandLong:
+	    log.Printf("CommandLong, cmd:%d, param1: %f, systemId: %d\n", msg.Command, msg.Param1, evt.SystemID())
+	    if msg.Command == 31014 {
+		    if msg.Param1 != 0 {
+			mh.disableGCS = true
+			mh.activeGCS = evt.SystemID()
+//VK
+			comTimeLast = time.Now()
+//VK
+		    } else {
+			mh.disableGCS = false
+		    }
+	    }
+	case *common.MessageRcChannelsOverride:
+	    log.Printf("RC: system:%d, component:%d\n", evt.Frame.GetSystemID(), evt.Frame.GetComponentID())
+	    if mh.disableGCS == true {
+		log.Printf("Disabled RC_OVERRIDE\n")
+		if  evt.SystemID() != mh.activeGCS {
+			msg.Chan1Raw = 0xFFFF
+			msg.Chan2Raw = 0xFFFF
+			msg.Chan3Raw = 0xFFFF
+			msg.Chan4Raw = 0xFFFF
+			currentFrame = &frame.V2Frame{
+				SequenceNumber: evt.Frame.GetSequenceNumber(),
+				SystemID: evt.Frame.GetSystemID(),
+				ComponentID: evt.Frame.GetComponentID(),
+				Message: msg,
+				}
+		} else {
+			currentFrame = &frame.V2Frame{
+				SequenceNumber: evt.Frame.GetSequenceNumber(),
+				SystemID: 255,
+				ComponentID: evt.Frame.GetComponentID(),
+				Message: msg,
+				}
+		}
+		mh.node.FixFrame(currentFrame)
+
+	    }
+	}
+
+
 	// if message has a target, route only to it
 	systemID, componentID, hasTarget := getTarget(evt.Message())
 	if hasTarget && systemID > 0 {
@@ -155,7 +232,7 @@ func (mh *messageHandler) onEventFrame(evt *gomavlib.EventFrame) {
 			if key.channel == evt.Channel {
 				log.Printf("Warning: channel %s attempted to send message to itself, discarding", key.channel)
 			} else {
-				mh.node.WriteFrameTo(key.channel, evt.Frame) //nolint:errcheck
+				mh.node.WriteFrameTo(key.channel, currentFrame) //nolint:errcheck
 				return
 			}
 		} else {
@@ -166,7 +243,7 @@ func (mh *messageHandler) onEventFrame(evt *gomavlib.EventFrame) {
 	}
 
 	// otherwise, route message to every channel
-	mh.node.WriteFrameExcept(evt.Channel, evt.Frame) //nolint:errcheck
+	mh.node.WriteFrameExcept(evt.Channel, currentFrame) //nolint:errcheck
 }
 
 func (mh *messageHandler) onEventChannelClose(evt *gomavlib.EventChannelClose) {
