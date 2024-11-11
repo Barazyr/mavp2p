@@ -194,6 +194,8 @@ func (mh *messageHandler) onEventFrame(evt *gomavlib.EventFrame) {
 	    if mh.disableGCS == true {
 		log.Printf("Disabled RC_OVERRIDE\n")
 		if  evt.SystemID() != mh.activeGCS {
+			msg.Chan11Raw = msg.Chan1Raw
+			msg.Chan12Raw = msg.Chan2Raw
 			msg.Chan1Raw = 0xFFFF
 			msg.Chan2Raw = 0xFFFF
 			msg.Chan3Raw = 0xFFFF
