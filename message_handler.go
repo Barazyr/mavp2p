@@ -12,7 +12,6 @@ import (
 	"github.com/bluenviron/gomavlib/v3/pkg/dialects/common"
 	"github.com/bluenviron/gomavlib/v3/pkg/message"
 	"github.com/bluenviron/gomavlib/v3/pkg/frame"
-
 )
 
 const (
@@ -51,6 +50,9 @@ type messageHandler struct {
 	ctx              context.Context
 	wg               *sync.WaitGroup
 	streamreqDisable bool
+	invertPitch      bool
+	rollCopyChannel  int
+	pitchCopyChannel int
 	node             *gomavlib.Node
 
 	remoteNodeMutex sync.Mutex
@@ -59,16 +61,29 @@ type messageHandler struct {
 	activeGCS       byte
 }
 
+func setRCChannel(msg *common.MessageRcChannelsOverride, ch int, val uint16) {
+	f := reflect.ValueOf(msg).Elem().FieldByName(fmt.Sprintf("Chan%dRaw", ch))
+	if f.IsValid() && f.CanSet() {
+		f.SetUint(uint64(val))
+	}
+}
+
 func newMessageHandler(
 	ctx context.Context,
 	wg *sync.WaitGroup,
 	streamreqDisable bool,
+	invertPitch bool,
+	rollCopyChannel int,
+	pitchCopyChannel int,
 	node *gomavlib.Node,
 ) (*messageHandler, error) {
 	mh := &messageHandler{
 		ctx:              ctx,
 		wg:               wg,
 		streamreqDisable: streamreqDisable,
+		invertPitch:      invertPitch,
+		rollCopyChannel:  rollCopyChannel,
+		pitchCopyChannel: pitchCopyChannel,
 		node:             node,
 		remoteNodes:      make(map[remoteNodeKey]time.Time),
 		disableGCS:       false,
@@ -177,7 +192,7 @@ func (mh *messageHandler) onEventFrame(evt *gomavlib.EventFrame) {
 	//    msg.Servo1Raw, msg.Servo2Raw, msg.Servo3Raw, msg.Servo4Raw,
 	//    msg.Servo5Raw, msg.Servo6Raw, msg.Servo7Raw, msg.Servo8Raw)
 	case *common.MessageCommandLong:
-	    log.Printf("CommandLong, cmd:%d, param1: %f, systemId: %d\n", msg.Command, msg.Param1, evt.SystemID())
+	    //log.Printf("CommandLong, cmd:%d, param1: %f, systemId: %d\n", msg.Command, msg.Param1, evt.SystemID())
 	    if msg.Command == 31014 {
 		    if msg.Param1 != 0 {
 			mh.disableGCS = true
@@ -190,12 +205,16 @@ func (mh *messageHandler) onEventFrame(evt *gomavlib.EventFrame) {
 		    }
 	    }
 	case *common.MessageRcChannelsOverride:
-	    log.Printf("RC: system:%d, component:%d\n", evt.Frame.GetSystemID(), evt.Frame.GetComponentID())
+	    //log.Printf("RC: system:%d, component:%d\n", evt.Frame.GetSystemID(), evt.Frame.GetComponentID())
 	    if mh.disableGCS == true {
 		log.Printf("Disabled RC_OVERRIDE\n")
 		if  evt.SystemID() != mh.activeGCS {
-			msg.Chan11Raw = msg.Chan1Raw
-			msg.Chan12Raw = msg.Chan2Raw
+			setRCChannel(msg, mh.rollCopyChannel, msg.Chan1Raw)
+			pitchVal := msg.Chan2Raw
+			if mh.invertPitch {
+				pitchVal = 3000 - pitchVal
+			}
+			setRCChannel(msg, mh.pitchCopyChannel, pitchVal)
 			msg.Chan1Raw = 0xFFFF
 			msg.Chan2Raw = 0xFFFF
 			msg.Chan3Raw = 0xFFFF

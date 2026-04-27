@@ -154,6 +154,9 @@ var cli struct {
 	HbPeriod           int           `help:"set period of heartbeats." default:"5"`
 	StreamreqDisable   bool
 	StreamreqFrequency int      `help:"set the stream frequency to request." default:"4"`
+	InvertPitch        bool     `help:"invert pitch channel (ch2) in RC_CHANNELS_OVERRIDE messages."`
+	RollCopyChannel    int      `help:"destination channel number for copied roll (ch1)." default:"11"`
+	PitchCopyChannel   int      `help:"destination channel number for copied pitch (ch2)." default:"12"`
 	Endpoints          []string `arg:"" optional:""`
 }
 
@@ -268,6 +271,9 @@ func newProgram(args []string) (*program, error) {
 		ctx,
 		&p.wg,
 		cli.StreamreqDisable,
+		cli.InvertPitch,
+		cli.RollCopyChannel,
+		cli.PitchCopyChannel,
 		p.node,
 	)
 	if err != nil {
