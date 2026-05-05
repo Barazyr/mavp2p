@@ -209,12 +209,16 @@ func (mh *messageHandler) onEventFrame(evt *gomavlib.EventFrame) {
 	    if mh.disableGCS == true {
 		log.Printf("Disabled RC_OVERRIDE\n")
 		if  evt.SystemID() != mh.activeGCS {
-			setRCChannel(msg, mh.rollCopyChannel, msg.Chan1Raw)
-			pitchVal := msg.Chan2Raw
-			if mh.invertPitch {
-				pitchVal = 3000 - pitchVal
+			if mh.rollCopyChannel != 0 {
+				setRCChannel(msg, mh.rollCopyChannel, msg.Chan1Raw)
 			}
-			setRCChannel(msg, mh.pitchCopyChannel, pitchVal)
+			if mh.pitchCopyChannel != 0 {
+				pitchVal := msg.Chan2Raw
+				if mh.invertPitch {
+					pitchVal = 3000 - pitchVal
+				}
+				setRCChannel(msg, mh.pitchCopyChannel, pitchVal)
+			}
 			msg.Chan1Raw = 0xFFFF
 			msg.Chan2Raw = 0xFFFF
 			msg.Chan3Raw = 0xFFFF
